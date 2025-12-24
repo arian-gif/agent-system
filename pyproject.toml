@@ -1,0 +1,18 @@
+[project]
+name = "agentic-team-backend"
+version = "0.1.0"
+description = "A manually orchestrated agentic system where a manager agent coordinates specialized agents to complete software tasks using LLMs."
+readme = "README.md"
+requires-python = ">=3.10"
+
+authors = [
+    { name = "Arian Khan" }
+]
+
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "python-docx>=1.1.0",
+    "python-dotenv>=1.0.1",
+    "openai>=1.30.0"
+]
