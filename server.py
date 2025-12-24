@@ -10,7 +10,7 @@ import uvicorn
 app = FastAPI(title="Agent Orchestrator Server")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080"],
+    allow_origins=["https://agentic-coder.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
