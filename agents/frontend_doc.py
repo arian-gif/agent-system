@@ -1,5 +1,16 @@
 from utils.llm_router import LLM
-import json
+from utils.codegen import generate_doc
+
+SECTIONS = [
+    ("System Overview", "purpose and scope of the frontend application"),
+    ("Architecture", "overall architecture and main building blocks"),
+    ("Technology Stack", "language, framework, build tooling and libraries"),
+    ("Application Structure", "directory layout, components, pages and services"),
+    ("State Management", "state management strategy"),
+    ("Routing", "routing strategy, or state clearly that it is single-page"),
+    ("Build and Deployment", "build and deployment notes"),
+    ("Design Decisions", "key design decisions and trade-offs"),
+]
 
 class FrontendDocAgent:
     def __init__(self, llm_provider="deepseek", model ="deepseek-chat",code=None):
@@ -9,61 +20,10 @@ class FrontendDocAgent:
         self.code = code
 
     async def generate_docs(self):
-        prompt = self.system_prompt()
-        response = await self.llm.chat(prompt)
-
-        try:
-            result = json.loads(response)
-        except json.JSONDecodeError:
-            raise ValueError("FrontendDocAgent returned invalid JSON.")
-
-        return result
-
-    def system_prompt(self) -> str:
-        return f"""
-            You are a Senior Frontend Engineer and Technical Writer.
-
-            Your task is to produce **formal technical documentation** for a frontend system.
-
-            RULES:
-            - This is NOT a code generation task.
-            - Write in a professional, technical tone.
-            - Be concise, structured, and implementation-focused.
-            - Do NOT include markdown.
-            - Do NOT include explanations outside the JSON.
-            - Output MUST be valid JSON.
-            - Do NOT wrap the response in backticks.
-
-            DOCUMENTATION SHOULD INCLUDE:
-            - System overview
-            - Architecture description
-            - Technology stack
-            - Application structure
-            - State management strategy
-            - Routing strategy
-            - Build & deployment notes
-            - Key design decisions
-
-            OUTPUT FORMAT (MANDATORY):
-            {{
-            "title": "Frontend Technical Documentation",
-            "sections": [
-                {{
-                "heading": "System Overview",
-                "content": [
-                    "Paragraph 1",
-                    "Paragraph 2"
-                ]
-                }},
-                {{
-                "heading": "Architecture",
-                "content": [
-                    "Paragraph 1"
-                ]
-                }}
-            ]
-            }}
-
-            Only return valid JSON.
-            """
-
+        return await generate_doc(
+            self.llm,
+            "Frontend Technical Documentation",
+            "You are a Senior Frontend Engineer and Technical Writer.",
+            SECTIONS,
+            self.code,
+        )

@@ -1,5 +1,5 @@
 from utils.llm_router import LLM
-import json
+from utils.codegen import generate_project, fix_project
 
 class FrontendAgent:
     def __init__(self, llm_provider="deepseek", model ="deepseek-chat",specs=None):
@@ -9,17 +9,10 @@ class FrontendAgent:
         self.specs = specs
 
     async def generate_code(self):
-        prompt = self.system_prompt()
-        response = await self.llm.chat(prompt)
-        try:
-            result = json.loads(response)
-        except:
-            raise ValueError("FrontendAgent returned invalid JSON during code generation.")
-        
-        return result
+        return await generate_project(self.llm, self.system_prompt(), self.specs, root="frontend")
 
     def system_prompt(self) -> str:
-        return f"""
+        return """
         You are the Frontend Engineer Agent.
 
         Your task is to generate a frontend application based on the given specification.
@@ -35,58 +28,11 @@ class FrontendAgent:
         - Use clean, readable, production-quality code.
         - Organize code into components, pages, services, and utilities where appropriate.
         - Do NOT include backend code.
-        - Do NOT include explanations, comments outside code, or markdown.
-        - Only output the requested files.
-        - Output MUST be valid JSON.
-        - Do NOT wrap the response in triple backticks.
-        - Do NOT include any text before or after the JSON.
-        - If the implementation would exceed a reasonable file size, simplify the solution instead of adding features.
-        -DO NOT EXCEED 1000 words in the JSON no matter what, even if you need to fix something, find work arounds, THIS IS A MVP
-
-
-        SPECIFICATION:
-        {self.specs}
-
-        OUTPUT FORMAT (MANDATORY):
-        {{
-        "files": [
-            {{
-            "path": "frontend/src/main.tsx",
-            "content": "import React from 'react'..."
-            }},
-            {{
-            "path": "frontend/src/App.tsx",
-            "content": "export default function App() {{ ... }}"
-            }}
-        ]
-        }}
-
-        Only return valid JSON.
+        - Put all frontend files under a frontend/ directory.
+        - Call the API at the exact paths given in the specification's API
+          contracts (including the /api prefix); do not add any other prefix.
+        - Backend errors arrive as {"detail": "<message>"}; show that text.
         """
 
-    async def fix_code(self, review_report: dict,code)->dict:
-        system_prompt = self.system_prompt()
-            
-        prompt = f"""
-        {system_prompt}
-        The reviewer found issues in your frontend code.
-        Fix the frontend code accordingly.
-
-        SPEC:
-        {self.specs}
-
-        Code:
-        {code}
-
-        Review Report:
-        {review_report}
-        """
-
-        response = await self.llm.chat(prompt)
-        try:
-            result = json.loads(response)
-        except:
-            raise ValueError("BackendAgent returned invalid JSON during fix cycle.")
-        
-        
-        return result
+    async def fix_code(self, review_report: list, code)->dict:
+        return await fix_project(self.llm, self.system_prompt(), self.specs, code, review_report)
