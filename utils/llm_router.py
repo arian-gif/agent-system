@@ -6,10 +6,23 @@ import asyncio
 
 load_dotenv()
 
+MAX_CONTINUATIONS = 4
+CONTINUE_PROMPT = (
+    "Your previous reply was cut off by the output limit. Continue exactly "
+    "where you stopped. Output only the remaining text, with no repetition, "
+    "no preamble and no code fences."
+)
+
+# Largest output the provider allows per request; None = provider default.
+MAX_OUTPUT_TOKENS = {
+    "deepseek": 8192,  # deepseek-chat defaults to 4096 unless raised
+}
+
 class LLM:
     def __init__(self, provider, model) -> None:
         self.provider = provider
         self.model = model
+        self.max_tokens = MAX_OUTPUT_TOKENS.get(provider)
 
         if provider == "deepseek":
             self.api_key = os.getenv("DEEPSEEK_API_KEY")
@@ -44,21 +57,45 @@ class LLM:
                 prompt
             )
 
-    def json_response(self, prompt):
+    def complete(self, prompt):
+        """
+        Run a completion and, if the model hit the output token limit
+        (finish_reason == "length"), ask it to continue and stitch the
+        pieces together so a long answer is not silently truncated.
+        """
         messages = [{"role": "system", "content": prompt}]
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages
+        kwargs = {}
+        if self.max_tokens:
+            kwargs["max_tokens"] = self.max_tokens
+
+        parts = []
+        for _ in range(MAX_CONTINUATIONS + 1):
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                **kwargs
+            )
+            choice = response.choices[0]
+            text = choice.message.content or ""
+            parts.append(text)
+
+            if choice.finish_reason != "length":
+                return "".join(parts)
+
+            messages = messages + [
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": CONTINUE_PROMPT},
+            ]
+
+        raise ValueError(
+            f"LLM output still truncated after {MAX_CONTINUATIONS} continuations"
         )
-        return self.extract_json(response.choices[0].message.content)
+
+    def json_response(self, prompt):
+        return self.extract_json(self.complete(prompt))
 
     def normal_response(self, prompt):
-        messages = [{"role": "system", "content": prompt}]
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages
-        )
-        return response.choices[0].message.content
+        return self.complete(prompt)
 
     def extract_json(self, text):
         text = text.strip()

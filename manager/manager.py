@@ -6,6 +6,7 @@ from agents.reviewer import ReviewerAgent
 from agents.frontend_doc import FrontendDocAgent
 from agents.backend_doc import BackendDocAgent
 import asyncio
+import logging
 
 class ManagerAgent:
     def __init__(self, task, llm_provider="deepseek", model ="deepseek-chat"):
@@ -31,8 +32,24 @@ class ManagerAgent:
         agent = ReviewerAgent(code =code)
         return await agent.review()
 
-    async def generate_specs(self, agent_type):
-        
+    @staticmethod
+    def extract_contract(backend_specs):
+        """The API Contracts + Error Handling sections of the backend spec."""
+        start = backend_specs.find("## API Contracts")
+        if start == -1:
+            return None
+        end = backend_specs.find("## Output Expectations", start)
+        return backend_specs[start:end if end != -1 else None].strip()
+
+    async def generate_specs(self, agent_type, contract=None):
+        contract_block = ""
+        if contract:
+            contract_block = f"""
+            BINDING API CONTRACT (already implemented by the backend; use these
+            exact methods, paths, field names and error format, invent nothing):
+            {contract}
+            """
+
         prompt = f"""
             You are the Manager Agent.
 
@@ -41,7 +58,7 @@ class ManagerAgent:
 
             TASK CONTEXT:
             {self.task}
-
+            {contract_block}
             GENERAL RULES:
             - This specification must describe a MINIMUM VIABLE PRODUCT (MVP) only.
             - Exclude advanced analytics, charts, dialogs, modals, tabs, or complex UI flows.
@@ -124,17 +141,10 @@ class ManagerAgent:
             - [Expected implementation detail 1]
             - [Expected implementation detail 2]
 
-            REQUIRED FOR BACKEND:
-            - Include these exact API endpoints:
-                - POST /api/items
-                - GET /api/items
-                - GET /api/items/{id}
-                - POST /api/items/{id}/change
-                - GET /api/items/{id}/history
-                - DELETE /api/items/{id}
-            - Include these exact data models: TrackedItem and ValueHistory
-            - TrackedItem must have: id, name, description, currentValue, createdAt, updatedAt
-            - ValueHistory must have: id, itemId, previousValue, delta, newValue, note, timestamp
+            API RULES:
+            - Derive the data models and endpoints from the TASK CONTEXT above.
+            - All endpoints live under the /api prefix.
+            - Return errors as a body of the form {{"detail": "<message>"}}.
 
             SCOPE LIMITATION:
             - The goal is correctness and integration, NOT completeness.
@@ -176,7 +186,14 @@ class ManagerAgent:
                 return code
             
             if revision_count >= max_revisions:
-                raise Exception("Max revisions exceeded")
+                # Keep the generated project instead of discarding it all
+                # because a single-file reviewer is still unhappy.
+                failing = [f["path"] for f in review["files"] if f["status"] == "fail"]
+                logging.warning(
+                    "%s: max revisions reached, returning code with unresolved review failures: %s",
+                    agent_type, failing,
+                )
+                return code
             
             if agent_type == "backend":
                 code = await self.call_backend_agent(
@@ -194,14 +211,14 @@ class ManagerAgent:
             )
             revision_count +=1
 
-    async def run_backend(self):
-        specs = await self.generate_specs("backend")
+    async def run_backend(self, specs=None):
+        specs = specs or await self.generate_specs("backend")
         backend_code = await self.call_backend_agent(specs)
         result = await self.feedback_loop(backend_code,"backend",specs)
         return result
 
-    async def run_frontend(self):
-        specs = await self.generate_specs("frontend")
+    async def run_frontend(self, contract=None):
+        specs = await self.generate_specs("frontend", contract=contract)
         frontend_code = await self.call_frontend_agent(specs)
         result = await self.feedback_loop(frontend_code,"frontend",specs)
         return result
@@ -220,8 +237,13 @@ class ManagerAgent:
 
 
     async def run_manager(self):
-        backend_task = asyncio.create_task(self.run_backend())
-        frontend_task = asyncio.create_task(self.run_frontend())
+        # Backend spec first: its API contract is binding for the frontend,
+        # otherwise the two independently written specs drift apart.
+        backend_specs = await self.generate_specs("backend")
+        contract = self.extract_contract(backend_specs)
+
+        backend_task = asyncio.create_task(self.run_backend(backend_specs))
+        frontend_task = asyncio.create_task(self.run_frontend(contract))
 
         backend_code, frontend_code = await asyncio.gather(
             backend_task,

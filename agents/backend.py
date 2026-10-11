@@ -1,5 +1,5 @@
 from utils.llm_router import LLM
-import json
+from utils.codegen import generate_project, fix_project
 
 class BackendAgent:
     def __init__(self, llm_provider="deepseek", model ="deepseek-chat",specs=None):
@@ -9,66 +9,27 @@ class BackendAgent:
         self.specs = specs
 
     async def generate_code(self):
-        prompt = self.system_prompt()
-        response = await self.llm.chat(prompt)
-        try:
-            result = json.loads(response)
-        except:
-            raise ValueError("BackendAgent returned invalid JSON during code generation.")
-        
-        return result
+        return await generate_project(self.llm, self.system_prompt(), self.specs, root="backend")
 
     def system_prompt(self)->str:
-        return f"""
-        You are a backend developer. You are given the following specifications:You are the Backend Engineer Agent.
+        return """
+        You are the Backend Engineer Agent.
         Your task is to generate a backend service as described in the specification.
 
         RULES:
         - Use FastAPI (preferred) or Express only if asked.
         - SQL schema is for reference ONLY.
-        - DO NOT output SQL, markdown, or code blocks.
+        - DO NOT output SQL.
         - DO NOT include explanations or comments.
-        - OUTPUT MUST BE VALID JSON ONLY.
         - Include proper error handling.
         - Follow clean architecture principles.
-        - DO NOT include explanations. Only return the JSON response.
-
-        SPECIFICATION:
-        {self.specs}
-        OUTPUT FORMAT (MANDATORY):
-        {{
-          "files": [
-            {{"path": "backend/app/main.py", "content": "import fastapi..."}},
-            {{"path": "backend/app/routes/example.py", "content": "..."}}
-          ]
-        }}
-
-        Only return valid JSON.
-
+        - Put all backend files under a backend/ directory.
+        - Routers declare their FULL path prefix themselves (e.g.
+          APIRouter(prefix="/api/notes")); main.py calls include_router(router)
+          with NO extra prefix, so paths are not doubled (never /api/api/...).
+        - Return errors as FastAPI's standard {"detail": "<message>"} body.
+        - Use absolute imports rooted at the app package (from app.x import y).
         """
 
-    async def fix_code(self, review_report: dict, code)->dict:
-        system_prompt = self.system_prompt()
-            
-        prompt = f"""
-        {system_prompt}
-        The reviewer found issues in your backend code.
-        Fix the backend code accordingly.
-
-        SPEC:
-        {self.specs}
-
-        Code:
-        {code}
-
-        Review Report:
-        {review_report}
-        """
-        response = await self.llm.chat(prompt)
-        try:
-            result = json.loads(response)
-        except:
-            raise ValueError("BackendAgent returned invalid JSON during fix cycle.")
-        
-        
-        return result
+    async def fix_code(self, review_report: list, code)->dict:
+        return await fix_project(self.llm, self.system_prompt(), self.specs, code, review_report)

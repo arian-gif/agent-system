@@ -8,7 +8,8 @@ class ReviewerAgent:
         self.model = model
         self.llm = LLM(llm_provider, model)
         self.code_content = code
-    
+        self.file_list = "\n".join(f["path"] for f in (code or {}).get("files", []))
+
     async def review(self):
         files = self.code_content["files"]
         review = {
@@ -18,13 +19,22 @@ class ReviewerAgent:
             path = file["path"]
             content = file["content"]
             prompt = self.system_prompt(content,path)
-            llm_response = await self.llm.chat(prompt)
-            if isinstance(llm_response, str):
-                llm_response = json.loads(llm_response)
-
-            review["files"].append(llm_response)
+            review["files"].append(await self.review_file(prompt))
         
         return review
+
+    async def review_file(self, prompt, attempts=2):
+        # strict=False tolerates raw newlines/tabs inside JSON strings, which
+        # models emit occasionally; retry once before giving up.
+        for attempt in range(attempts):
+            llm_response = await self.llm.chat(prompt)
+            try:
+                if isinstance(llm_response, str):
+                    llm_response = json.loads(llm_response, strict=False)
+                return llm_response
+            except json.JSONDecodeError:
+                if attempt == attempts - 1:
+                    raise
 
     def system_prompt(self, code: str,path: str) -> str:
         return f"""
@@ -32,9 +42,15 @@ class ReviewerAgent:
 
             You will review EXACTLY ONE source file.
 
+            PROJECT FILES (other files exist and are reviewed separately; assume
+            imports of these paths resolve correctly):
+            {self.file_list}
+
             RULES:
             - Review only the code provided.
-            - Do NOT reference other files or project context.
+            - Do NOT flag missing or unseen code in the other project files.
+            - Do NOT flag hypothetical states (e.g. a value "might be undefined")
+              unless the code itself shows that state can occur.
             - Return ONLY valid JSON.
             - Do NOT include explanations, markdown, or extra text.
 
@@ -55,7 +71,7 @@ class ReviewerAgent:
             If no issues are found, return an empty issues array.
 
             SEVERITY RULES:
-            - critical: causes runtime error, crash, data loss, security issue, or incorrect behavior
+            - critical: you can point to a specific line that DEFINITELY causes a syntax error, crash, data loss, security hole, or wrong behavior in normal use. If you are unsure, use major.
             - major: likely bug or incorrect behavior in edge cases
             - minor: style issues, best practices, deprecations, readability
 
